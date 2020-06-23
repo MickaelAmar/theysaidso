@@ -3,21 +3,16 @@
 namespace App\Controller;
 
 use App\Entity\Quote;
-use App\Helpers\FileHelper;
-use App\Helpers\StringHelper;
-use PhpParser\Node\Scalar\MagicConst\File;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
-use Symfony\Component\HttpKernel\KernelInterface;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 use Symfony\Component\Routing\Annotation\Route;
+use Symfony\Contracts\Cache\CacheInterface;
 
 
 /*
 TODO :
-- Validate route+request params
-- Is there another way to handle params ? accessors ?
-- Manage cache
 - Add tests
 - Deploy
 - BONUS : Set up a live documentation/test page (Swagger ?)
@@ -37,19 +32,37 @@ class QuoteController extends AbstractController
      * @Route("/quote/{author_slug}", methods="GET")
      * @param string $author_slug
      * @param Request $request
-     * @param KernelInterface $kernel
+     * @param CacheInterface $cache
      * @return JsonResponse
+     * @throws \Psr\Cache\InvalidArgumentException
      */
-    public function show(string $author_slug, Request $request)
+    public function show(string $author_slug, Request $request, CacheInterface $cache)
     {
-        // Get parameters
-        $limit = $request->query->get('limit', 10);
-        $author = ucwords(str_replace('-', ' ', $author_slug));
+        try {
 
-        // Json response
-        $shout_quotes = $this->quote_entity->findByAuthor($author, $limit);
+            // Get parameters
+            $author = ucwords(str_replace('-', ' ', $author_slug));
+            $limit = $request->query->get('limit', 10);
+            if ($limit > 10) {
+                throw new HttpException(400, "Limit parameter shouldn't be higher than 10");
+            }
 
-        return $this->json($shout_quotes);
+            // Fetching quotes
+            $shouted_quotes  = $cache->get('markdown_'.md5($author.$limit), function() use ($author, $limit) {
+                return $this->quote_entity->findByAuthor($author, $limit);
+            });
+
+            // Json response
+            return $this->json($shouted_quotes);
+
+        } catch (\Exception $exception) {
+
+            return new JsonResponse([
+                'success' => false,
+                'code'    => $exception->getCode() ?: 400,
+                'message' => $exception->getMessage(),
+            ]);
+
+        }
     }
-
 }
